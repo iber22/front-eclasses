@@ -10,30 +10,28 @@ let state = {
 let usuarios = [];
 
 document.addEventListener('DOMContentLoaded', async () => {
-    await loadInitialData();
+    await loadAllData();
     await loadUsuarios();
     setupNavigation();
     renderAll();
 });
 
-async function loadInitialData() {
-    const savedState = localStorage.getItem('gamerclass_state');
-    if (savedState) {
-        state = JSON.parse(savedState);
-    } else {
-        try {
-            const response = await fetch('data.json');
-            state = await response.json();
-            saveState();
-        } catch (error) {
-            console.error("Erro ao carregar data.json:", error);
-        }
-    }
-}
+async function loadAllData() {
+    try {
+        const [gamesRes, teamsRes, competitorsRes, matchesRes] = await Promise.all([
+            fetch(`${API_URL}/games`),
+            fetch(`${API_URL}/teams`),
+            fetch(`${API_URL}/competitors`),
+            fetch(`${API_URL}/matches`)
+        ]);
 
-function saveState() {
-    localStorage.setItem('gamerclass_state', JSON.stringify(state));
-    renderAll();
+        state.games = await gamesRes.json();
+        state.teams = await teamsRes.json();
+        state.competitors = await competitorsRes.json();
+        state.matches = await matchesRes.json();
+    } catch (error) {
+        console.error("Erro ao carregar dados da API:", error);
+    }
 }
 
 async function loadUsuarios() {
@@ -55,6 +53,120 @@ function renderAll() {
     renderUsuarios();
 }
 
+async function saveItem(event, collection) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    let newItem = Object.fromEntries(formData.entries());
+
+    if (newItem.teamId) newItem.teamId = Number(newItem.teamId);
+    if (newItem.gameId) newItem.gameId = Number(newItem.gameId);
+    if (newItem.team1Id) newItem.team1Id = Number(newItem.team1Id);
+    if (newItem.team2Id) newItem.team2Id = Number(newItem.team2Id);
+    if (newItem.idade) newItem.idade = Number(newItem.idade);
+
+    try {
+        const response = await fetch(`${API_URL}/${collection}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(newItem)
+        });
+
+        if (!response.ok) throw new Error('Erro ao salvar');
+
+        await loadAllData();
+        renderAll();
+        closeModal();
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function finishMatch(id) {
+    const match = state.matches.find(m => m.id == id);
+    if (!match) return;
+
+    const s1 = prompt(`Placar para ${state.teams.find(t => t.id == match.team1Id)?.name}:`, "0");
+    const s2 = prompt(`Placar para ${state.teams.find(t => t.id == match.team2Id)?.name}:`, "0");
+
+    if (s1 === null || s2 === null) return;
+
+    try {
+        await fetch(`${API_URL}/matches/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                score1: Number(s1),
+                score2: Number(s2),
+                status: 'finished'
+            })
+        });
+
+        await loadAllData();
+        renderAll();
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function saveUsuario(event) {
+    event.preventDefault();
+    const formData = new FormData(event.target);
+    const novo = Object.fromEntries(formData.entries());
+
+    try {
+        await fetch(`${API_URL}/usuarios`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(novo)
+        });
+        await loadUsuarios();
+        renderAll();
+        closeModal();
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function editarUsuario(id) {
+    const user = usuarios.find(u => u.id === id);
+    if (!user) return;
+
+    const nome = prompt("Novo nome:", user.nome);
+    const email = prompt("Novo email:", user.email);
+    const nickname = prompt("Novo nickname:", user.nickname || "");
+    const idade = prompt("Nova idade:", user.idade || "");
+
+    if (!nome || !email) return;
+
+    try {
+        await fetch(`${API_URL}/usuarios/${id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                nome, 
+                email, 
+                nickname, 
+                idade: idade ? Number(idade) : null 
+            })
+        });
+        await loadUsuarios();
+        renderAll();
+    } catch (err) {
+        console.error(err);
+    }
+}
+
+async function deletarUsuario(id) {
+    if (!confirm("Tem certeza que deseja excluir este usuário?")) return;
+    try {
+        await fetch(`${API_URL}/usuarios/${id}`, { method: 'DELETE' });
+        await loadUsuarios();
+        renderAll();
+    } catch (err) {
+        console.error(err);
+    }
+}
+
 function setupNavigation() {
     const navItems = document.querySelectorAll('#sidebar-nav li');
     navItems.forEach(item => {
@@ -74,86 +186,10 @@ function switchView(viewId) {
     document.getElementById(`view-${viewId}`).classList.add('active');
 }
 
-function renderUsuarios() {
-    const container = document.getElementById('list-usuarios');
-    if (!container) return;
-
-    container.innerHTML = usuarios.map(u => `
-        <div class="card">
-            <span class="card-tag">USUÁRIO</span>
-            <h3>${u.nickname || u.nome}</h3>
-            <p class="subtitle">${u.nome}</p>
-            <p><strong>Email:</strong> ${u.email}</p>
-            ${u.idade ? `<p><strong>Idade:</strong> ${u.idade} anos</p>` : ''}
-            <div style="margin-top: 15px; display: flex; gap: 8px;">
-                <button onclick="editarUsuario(${u.id})" style="flex:1; padding:8px 12px;">Editar</button>
-                <button onclick="deletarUsuario(${u.id})" style="flex:1; padding:8px 12px; background:#ef4444; color:white;">Excluir</button>
-            </div>
-        </div>
-    `).join('');
-}
-
-async function saveUsuario(event) {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const novo = Object.fromEntries(formData.entries());
-
-    try {
-        await fetch(`${API_URL}/usuarios`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(novo)
-        });
-        await loadUsuarios();
-        renderAll();
-        closeModal();
-    } catch (err) {
-        alert("Erro ao salvar usuário. Verifique se a API está rodando.");
-    }
-}
-
-async function editarUsuario(id) {
-    const user = usuarios.find(u => u.id === id);
-    if (!user) return;
-
-    const nome = prompt("Novo nome:", user.nome);
-    const email = prompt("Novo email:", user.email);
-    const nickname = prompt("Novo nickname:", user.nickname || "");
-    const idade = prompt("Nova idade:", user.idade || "");
-
-    if (nome && email) {
-        try {
-            await fetch(`${API_URL}/usuarios/${id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ nome, email, nickname, idade: idade ? Number(idade) : null })
-            });
-            await loadUsuarios();
-            renderAll();
-        } catch (err) {
-            alert("Erro ao atualizar");
-        }
-    }
-}
-
-async function deletarUsuario(id) {
-    if (!confirm("Tem certeza que deseja excluir este usuário?")) return;
-
-    try {
-        await fetch(`${API_URL}/usuarios/${id}`, { method: 'DELETE' });
-        await loadUsuarios();
-        renderAll();
-    } catch (err) {
-        alert("Erro ao excluir");
-    }
-}
-
-// ==================== Funções Originais (mantidas) ====================
-
 function renderDashboard() {
     const statsContainer = document.getElementById('dashboard-stats');
     const upcomingContainer = document.getElementById('upcoming-matches');
-    
+   
     const totalTeams = state.teams.length;
     const totalPlayers = state.competitors.length;
     const finishedMatches = state.matches.filter(m => m.status === 'finished').length;
@@ -243,7 +279,7 @@ function renderConfrontos() {
         const t1 = state.teams.find(t => t.id == m.team1Id);
         const t2 = state.teams.find(t => t.id == m.team2Id);
         const dateStr = new Date(m.date).toLocaleString('pt-BR');
-        
+       
         return `
             <div class="card">
                 <span class="card-tag">${game?.name || 'Jogo'} | ${dateStr}</span>
@@ -269,6 +305,24 @@ function renderConfrontos() {
     }).join('');
 }
 
+function renderUsuarios() {
+    const container = document.getElementById('list-usuarios');
+    if (!container) return;
+    container.innerHTML = usuarios.map(u => `
+        <div class="card">
+            <span class="card-tag">USUÁRIO</span>
+            <h3>${u.nickname || u.nome}</h3>
+            <p class="subtitle">${u.nome}</p>
+            <p><strong>Email:</strong> ${u.email}</p>
+            ${u.idade ? `<p><strong>Idade:</strong> ${u.idade} anos</p>` : ''}
+            <div style="margin-top: 15px; display: flex; gap: 8px;">
+                <button onclick="editarUsuario(${u.id})" style="flex:1; padding:8px 12px;">Editar</button>
+                <button onclick="deletarUsuario(${u.id})" style="flex:1; padding:8px 12px; background:#ef4444; color:white;">Excluir</button>
+            </div>
+        </div>
+    `).join('');
+}
+
 const modal = document.getElementById('modal-container');
 const formContent = document.getElementById('form-content');
 
@@ -280,7 +334,7 @@ function showForm(type) {
     }, 10);
 
     let html = '';
-    
+   
     if (type === 'jogo') {
         html = `
             <h2>Adicionar Jogo</h2>
@@ -405,7 +459,7 @@ function showForm(type) {
             </form>
         `;
     }
-    
+   
     formContent.innerHTML = html;
 }
 
@@ -416,38 +470,3 @@ function closeModal() {
         modal.style.display = 'none';
     }, 300);
 }
-
-function saveItem(event, collection) {
-    event.preventDefault();
-    const formData = new FormData(event.target);
-    const newItem = Object.fromEntries(formData.entries());
-    
-    const maxId = state[collection].reduce((max, obj) => (obj.id > max ? obj.id : max), 0);
-    newItem.id = Number(maxId) + 1;
-
-    if (newItem.teamId) newItem.teamId = Number(newItem.teamId);
-    if (newItem.gameId) newItem.gameId = Number(newItem.gameId);
-    if (newItem.team1Id) newItem.team1Id = Number(newItem.team1Id);
-    if (newItem.team2Id) newItem.team2Id = Number(newItem.team2Id);
-    if (newItem.score1 !== undefined) newItem.score1 = Number(newItem.score1);
-    if (newItem.score2 !== undefined) newItem.score2 = Number(newItem.score2);
-
-    state[collection].push(newItem);
-    saveState();
-    closeModal();
-}
-
-function finishMatch(id) {
-    const match = state.matches.find(m => m.id == id);
-    if (!match) return;
-
-    const s1 = prompt(`Placar para ${state.teams.find(t => t.id == match.team1Id).name}:`, "0");
-    const s2 = prompt(`Placar para ${state.teams.find(t => t.id == match.team2Id).name}:`, "0");
-
-    if (s1 !== null && s2 !== null) {
-        match.score1 = Number(s1);
-        match.score2 = Number(s2);
-        match.status = 'finished';
-        saveState();
-    }
-};
